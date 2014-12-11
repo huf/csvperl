@@ -1,0 +1,90 @@
+#!/usr/bin/env perl
+use v5.12;
+use strict;
+use warnings;
+
+use Data::Dumper;
+use Getopt::Long;
+use Text::CSV;
+use Variable::Magic qw/wizard cast/;
+
+Getopt::Long::Configure "bundling";
+
+sub usage {
+	qq{$0 .....\n};
+}
+
+GetOptions
+	p => \my $while_print,
+	n => \my $while_noprint,
+	'e=s' => \my $eval,
+	h => \my $header,
+	s => \my $sep_char,
+	q => \my $quote_char,
+		or die usage;
+
+$quote_char //= '"';
+$sep_char //= ',';
+
+my (@F, %F, @H);
+
+$_ = Magic::Thing->new;
+
+die "no code!" unless defined $eval;
+
+my $CSV = Text::CSV->new({
+		binary => 1,
+		sep_char => $sep_char,
+		quote_char => $quote_char,
+	});
+
+if ($header) {
+	@H = @{ $CSV->getline(\*ARGV) or die "cannot get header\n" };
+}
+
+my $code = eval qq{ sub { $eval } } or die $@;
+
+if ($header) {
+	$CSV->combine(@H);
+	print $CSV->string."\n";
+}
+
+if ($while_noprint || $while_print) {
+	while (@F = @{ $CSV->getline(\*ARGV) // [] }) {
+		if ($header) {
+			%F = ();
+			@F{@H} = @F;
+		}
+		$code->();
+	}
+	continue {
+		print if $while_print;
+	}
+}
+else {
+	$code->();
+}
+
+package Magic::Thing;
+use overload '""' => sub {
+	$CSV->combine($header ? @F{ @H } : @F);
+	return $CSV->string."\n";
+};
+
+sub new {
+	bless [], shift;
+}
+
+# use tie (or something) to make @F and %F (and @H?) stay in sync
+# when should we emit header lines? huh?
+# csvperl file <- slurp the file and act like it was passed as -e 'CONTENTS OF file' ?
+# csvperl -e 'code' <- what does this one do?
+# csvperl -pe 'code'
+# csvperl -ne 'code'
+# csvperl -Mmodule=blargh -mmodule -M-module
+# csvperl -d, -q\"
+# csvperl -h # header mode, populate %F (and @H contains the header names in order)
+# ^^^^^^^^^^^^^^^ so what is the help option then? eh? :)
+# row() to assemble a new line? so row(@F) or row(@F{@H}) <- this last one is ew, can i make it sensitive to %F vs @F?
+# $_ contains the current entire row as one string... uh, 1) how do you get that out of Text::CSV and ... how is that useful at all?
+# and i prolly cant get a bare print if $F{id} =~ /thing/; to call row(@F)... unless i make $_ fucking *magic* (overload bullshit?)
