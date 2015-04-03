@@ -6,19 +6,28 @@ use warnings;
 use Data::Dumper;
 use Getopt::Long;
 use Text::CSV;
-use Variable::Magic qw/wizard cast/;
 
 Getopt::Long::Configure "bundling";
 
+our $VERSION = '1.0';
+
 sub usage {
-	qq{$0 .....\n};
+<<"USAGE";
+$0 [-s SEP] [-q QUOTE] [-p|-n] -e CODE [files...]
+ -e CODE  - any perl code. your row is in \@F, you can fetch the next row with row()
+ -n       - surrounds your code with this: while (row) { CODE }
+ -p       - same as -n, but prints in the while loop's continue block
+
+ -s SEP   - separator for reading/writing the csv
+ -q QUOTE - quote char for reading/writing the csv
+ v$VERSION
+USAGE
 }
 
 GetOptions
 	p => \my $while_print,
 	n => \my $while_noprint,
 	'e=s' => \my $eval,
-	h => \my $header,
 	s => \my $sep_char,
 	q => \my $quote_char,
 		or die usage;
@@ -26,35 +35,27 @@ GetOptions
 $quote_char //= '"';
 $sep_char //= ',';
 
-my (@F, %F, @H);
+my (@F);
 
 $_ = Magic::Thing->new;
 
-die "no code!" unless defined $eval;
+die usage unless defined $eval;
 
 my $CSV = Text::CSV->new({
 		binary => 1,
 		sep_char => $sep_char,
 		quote_char => $quote_char,
+		eol => "\n",
 	});
 
-if ($header) {
-	@H = @{ $CSV->getline(\*ARGV) or die "cannot get header\n" };
+sub row {
+	@F = @{ $CSV->getline(\*ARGV) // [] }
 }
 
 my $code = eval qq{ sub { $eval } } or die $@;
 
-if ($header) {
-	$CSV->combine(@H);
-	print $CSV->string."\n";
-}
-
 if ($while_noprint || $while_print) {
-	while (@F = @{ $CSV->getline(\*ARGV) // [] }) {
-		if ($header) {
-			%F = ();
-			@F{@H} = @F;
-		}
+	while (row) {
 		$code->();
 	}
 	continue {
@@ -67,14 +68,17 @@ else {
 
 package Magic::Thing;
 use overload '""' => sub {
-	$CSV->combine($header ? @F{ @H } : @F);
-	return $CSV->string."\n";
+	$CSV->combine(@F);
+	return $CSV->string;
 };
 
 sub new {
 	bless [], shift;
 }
 
+
+
+# bloody hell, i need to write tests
 # use tie (or something) to make @F and %F (and @H?) stay in sync
 # when should we emit header lines? huh?
 # csvperl file <- slurp the file and act like it was passed as -e 'CONTENTS OF file' ?
@@ -88,3 +92,5 @@ sub new {
 # row() to assemble a new line? so row(@F) or row(@F{@H}) <- this last one is ew, can i make it sensitive to %F vs @F?
 # $_ contains the current entire row as one string... uh, 1) how do you get that out of Text::CSV and ... how is that useful at all?
 # and i prolly cant get a bare print if $F{id} =~ /thing/; to call row(@F)... unless i make $_ fucking *magic* (overload bullshit?)
+# option for windows newlines, for in and output separately
+# separate options for in-header and out-header, also -h to turn both on?
